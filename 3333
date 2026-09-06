@@ -1,0 +1,65 @@
+class MovieBookingSystem:
+
+    def __init__(self):
+        self.bookings = {}
+
+    def create_booking(
+        self,
+        booking_id: str,
+        customer_name: str,
+        movie_name: str,
+        tickets: int,
+    ) -> dict:
+        if booking_id in self.bookings:
+            raise ValueError("Booking already exists")
+
+        booking_info = {
+            "customer_name": customer_name,
+            "movie_name": movie_name,
+            "tickets": tickets,
+            "status": "Booked",
+        }
+        self.bookings[booking_id] = booking_info
+        return booking_info
+
+    def update_tickets(self, booking_id: str, new_ticket_count: int) -> dict:
+        if booking_id not in self.bookings:
+            raise KeyError("Booking not found")
+
+        self.bookings[booking_id]["tickets"] = new_ticket_count
+        return self.bookings[booking_id]
+
+    def get_booking_details(self, booking_id: str) -> dict:
+        if booking_id not in self.bookings:
+            raise KeyError("Booking not found")
+
+        return self.bookings[booking_id]
+
+    def get_group_bookings(self, minimum_tickets: int) -> list:
+        return [
+            b_id
+            for b_id, info in self.bookings.items()
+            if info["tickets"] >= minimum_tickets
+        ]
+
+
+# Initialize the system
+system = MovieBookingSystem()
+
+# Task 1: Create Bookings
+print("Task 1 - Create Booking:")
+print(system.create_booking("B101", "Priya", "Avatar", 3))
+print(system.create_booking("B102", "Rahul", "Inception", 1))
+print(system.create_booking("B104", "Anita", "Titanic", 5))
+
+# Task 2: Update Ticket Count
+print("\nTask 2 - Update Ticket Count:")
+print(system.update_tickets("B101", 4))
+
+# Task 3: Get Booking Details
+print("\nTask 3 - Get Booking Details:")
+print(system.get_booking_details("B101"))
+
+# Task 4: Find Group Bookings
+print("\nTask 4 - Find Group Bookings:")
+print(system.get_group_bookings(3))
