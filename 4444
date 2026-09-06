@@ -1,0 +1,65 @@
+class ParcelTrackingSystem:
+
+    def __init__(self):
+        self.parcels = {}
+
+    def add_parcel(
+        self,
+        tracking_id: str,
+        customer_name: str,
+        destination: str,
+        weight: float,
+    ) -> dict:
+        if tracking_id in self.parcels:
+            raise ValueError("Parcel already exists")
+
+        parcel_info = {
+            "customer_name": customer_name,
+            "destination": destination,
+            "weight": weight,
+            "status": "In Transit",
+        }
+        self.parcels[tracking_id] = parcel_info
+        return parcel_info
+
+    def update_weight(self, tracking_id: str, new_weight: float) -> dict:
+        if tracking_id not in self.parcels:
+            raise KeyError("Parcel not found")
+
+        self.parcels[tracking_id]["weight"] = new_weight
+        return self.parcels[tracking_id]
+
+    def get_parcel_details(self, tracking_id: str) -> dict:
+        if tracking_id not in self.parcels:
+            raise KeyError("Parcel not found")
+
+        return self.parcels[tracking_id]
+
+    def get_heavy_parcels(self, minimum_weight: float) -> list:
+        return [
+            t_id
+            for t_id, info in self.parcels.items()
+            if info["weight"] >= minimum_weight
+        ]
+
+
+# Initialize the system
+system = ParcelTrackingSystem()
+
+# Task 1: Add Parcels
+print("Task 1 - Add Parcel:")
+print(system.add_parcel("TR101", "Meena", "Chennai", 4.5))
+print(system.add_parcel("TR102", "Rohan", "Mumbai", 8.0))
+print(system.add_parcel("TR105", "Priya", "Delhi", 12.5))
+
+# Task 2: Update Parcel Weight
+print("\nTask 2 - Update Parcel Weight:")
+print(system.update_weight("TR101", 5.2))
+
+# Task 3: Get Parcel Details
+print("\nTask 3 - Get Parcel Details:")
+print(system.get_parcel_details("TR101"))
+
+# Task 4: Find Heavy Parcels
+print("\nTask 4 - Find Heavy Parcels:")
+print(system.get_heavy_parcels(7.0))
