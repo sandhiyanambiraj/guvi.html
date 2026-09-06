@@ -1,0 +1,101 @@
+class MobileDataUsageSystem:
+
+    def __init__(self):
+        self.customers = {
+            "C101": {
+                "name": "Rahul",
+                "plan_name": "5G Plus",
+                "data_used": 42.5,
+                "status": "Active"
+            }
+        }
+
+    # Task 1 — Add Customer
+    def add_customer(
+        self,
+        customer_id: str,
+        name: str,
+        plan_name: str,
+        data_used: float
+    ) -> dict:
+
+        if customer_id in self.customers:
+            raise ValueError("Customer already exists")
+
+        self.customers[customer_id] = {
+            "name": name,
+            "plan_name": plan_name,
+            "data_used": data_used,
+            "status": "Active"
+        }
+
+        return self.customers[customer_id]
+
+    # Task 2 — Update Data Usage
+    def update_data_usage(
+        self,
+        customer_id: str,
+        new_usage: float
+    ) -> dict:
+
+        if customer_id not in self.customers:
+            raise KeyError("Customer not found")
+
+        self.customers[customer_id]["data_used"] = new_usage
+
+        return self.customers[customer_id]
+
+    # Task 3 — Get Customer Details
+    def get_customer_details(
+        self,
+        customer_id: str
+    ) -> dict:
+
+        if customer_id not in self.customers:
+            raise KeyError("Customer not found")
+
+        return self.customers[customer_id]
+
+    # Task 4 — Find High Data Users
+    def get_high_data_users(
+        self,
+        usage_threshold: float
+    ) -> list:
+
+        return [
+            customer_id
+            for customer_id, details in self.customers.items()
+            if details["data_used"] >= usage_threshold
+        ]
+
+
+# Testing
+
+system = MobileDataUsageSystem()
+
+print(system.add_customer(
+    "C102",
+    "Priya",
+    "5G Premium",
+    35.5
+))
+
+print(system.add_customer(
+    "C103",
+    "Arun",
+    "4G Plus",
+    25.0
+))
+
+print(system.add_customer(
+    "C104",
+    "Sneha",
+    "5G Unlimited",
+    50.0
+))
+
+print(system.update_data_usage("C102", 45.0))
+
+print(system.get_customer_details("C101"))
+
+print(system.get_high_data_users(40))
