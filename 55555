@@ -1,0 +1,65 @@
+class CafeteriaOrderSystem:
+
+    def __init__(self):
+        self.orders = {}
+
+    def add_order(
+        self,
+        employee_id: str,
+        name: str,
+        meal_type: str,
+        quantity: int,
+    ) -> dict:
+        if employee_id in self.orders:
+            raise ValueError("Order already exists")
+
+        order_info = {
+            "name": name,
+            "meal_type": meal_type,
+            "quantity": quantity,
+            "status": "Confirmed",
+        }
+        self.orders[employee_id] = order_info
+        return order_info
+
+    def update_quantity(self, employee_id: str, new_quantity: int) -> dict:
+        if employee_id not in self.orders:
+            raise KeyError("Order not found")
+
+        self.orders[employee_id]["quantity"] = new_quantity
+        return self.orders[employee_id]
+
+    def get_order_details(self, employee_id: str) -> dict:
+        if employee_id not in self.orders:
+            raise KeyError("Order not found")
+
+        return self.orders[employee_id]
+
+    def get_bulk_orders(self, minimum_quantity: int) -> list:
+        return [
+            emp_id
+            for emp_id, info in self.orders.items()
+            if info["quantity"] >= minimum_quantity
+        ]
+
+
+# Initialize the system
+system = CafeteriaOrderSystem()
+
+# Task 1: Add Meal Order
+print("Task 1 - Add Meal Order:")
+print(system.add_order("E101", "Arun", "Lunch", 2))
+print(system.add_order("E102", "Priya", "Breakfast", 5))
+print(system.add_order("E105", "Rohan", "Dinner", 4))
+
+# Task 2: Update Meal Quantity
+print("\nTask 2 - Update Meal Quantity:")
+print(system.update_quantity("E101", 3))
+
+# Task 3: Get Order Details
+print("\nTask 3 - Get Order Details:")
+print(system.get_order_details("E101"))
+
+# Task 4: Find Bulk Orders
+print("\nTask 4 - Find Bulk Orders:")
+print(system.get_bulk_orders(4))
