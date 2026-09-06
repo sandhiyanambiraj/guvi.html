@@ -1,0 +1,67 @@
+class GymWorkoutSystem:
+
+    def __init__(self):
+        self.members = {}
+
+    def add_member(
+        self,
+        member_id: str,
+        name: str,
+        workout_type: str,
+        workout_minutes: int,
+    ) -> dict:
+        if member_id in self.members:
+            raise ValueError("Member already exists")
+
+        member_info = {
+            "name": name,
+            "workout_type": workout_type,
+            "workout_minutes": workout_minutes,
+            "status": "Active",
+        }
+        self.members[member_id] = member_info
+        return member_info
+
+    def update_workout_minutes(
+        self, member_id: str, new_minutes: int
+    ) -> dict:
+        if member_id not in self.members:
+            raise KeyError("Member not found")
+
+        self.members[member_id]["workout_minutes"] = new_minutes
+        return self.members[member_id]
+
+    def get_member_details(self, member_id: str) -> dict:
+        if member_id not in self.members:
+            raise KeyError("Member not found")
+
+        return self.members[member_id]
+
+    def get_active_members(self, minimum_minutes: int) -> list:
+        return [
+            member_id
+            for member_id, info in self.members.items()
+            if info["workout_minutes"] >= minimum_minutes
+        ]
+
+
+# Initialize the system
+gym = GymWorkoutSystem()
+
+# Task 1 - Add Members
+print("--- Task 1: Add Member ---")
+print(gym.add_member("M101", "Kavin", "Cardio", 45))
+print(gym.add_member("M102", "Sarah", "Yoga", 20))
+print(gym.add_member("M103", "John", "Weights", 60))
+
+# Task 2 - Update Workout Minutes
+print("\n--- Task 2: Update Workout Minutes ---")
+print(gym.update_workout_minutes("M101", 50))
+
+# Task 3 - Get Member Details
+print("\n--- Task 3: Get Member Details ---")
+print(gym.get_member_details("M101"))
+
+# Task 4 - Get Highly Active Members
+print("\n--- Task 4: Get Highly Active Members ---")
+print(gym.get_active_members(45))
