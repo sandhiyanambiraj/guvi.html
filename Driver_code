@@ -1,0 +1,27 @@
+spark = SparkSession.builder.appName("EmployeeAnalysis").getOrCreate()
+
+employees_df, performance_df = load_employee_data(
+
+    spark,
+
+    "employees.csv",
+
+    "performance.csv"
+
+)
+
+joined_df = join_employee_data(
+
+    employees_df,
+
+    performance_df
+
+)
+
+enriched_df = enrich_employee_name(joined_df)
+
+result_df = find_underperforming_employees(enriched_df)
+
+result_df.show()
+
+spark.stop()
