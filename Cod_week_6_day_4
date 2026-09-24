@@ -1,0 +1,53 @@
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.functions import col, trim, min, max, avg
+
+
+def load_feedback_data(spark: SparkSession, path: str) -> DataFrame:
+    return spark.read \
+        .option("header", True) \
+        .option("inferSchema", True) \
+        .csv(path)
+
+
+def clean_missing_and_invalid_emails(df: DataFrame) -> DataFrame:
+    return df.filter(
+        col("email").isNotNull() &
+        (trim(col("email")) != "")
+    )
+
+
+def compute_rating_stats(df: DataFrame) -> dict:
+    result = df \
+        .filter(col("rating").isNotNull()) \
+        .select(col("rating").cast("int").alias("rating")) \
+        .agg(
+            min("rating").alias("min_rating"),
+            max("rating").alias("max_rating"),
+            avg("rating").alias("avg_rating")
+        ) \
+        .collect()[0]
+
+    return {
+        "min_rating": result["min_rating"],
+        "max_rating": result["max_rating"],
+        "avg_rating": result["avg_rating"]
+    }
+
+
+def count_ratings(df: DataFrame) -> int:
+    return df.filter(col("rating").isNotNull()).count()
+
+
+def most_common_rating(df: DataFrame) -> int:
+    result = df \
+        .select(col("rating").cast("int").alias("rating")) \
+        .filter(col("rating").between(1, 5)) \
+        .groupBy("rating") \
+        .count() \
+        .orderBy(col("count").desc(), col("rating").asc()) \
+        .collect()
+
+    if len(result) == 0:
+        return 0
+
+    return result[0]["rating"]
