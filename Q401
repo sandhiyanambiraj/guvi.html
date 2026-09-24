@@ -1,0 +1,170 @@
+from typing import List, Tuple
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    IntegerType,
+    DoubleType
+)
+from pyspark.sql.functions import (
+    col,
+    to_date,
+    datediff,
+    sum as _sum,
+    avg,
+    count as _count,
+    when
+)
+
+# 1) define_schema() -> StructType
+def define_schema() -> StructType:
+    return StructType([
+        StructField("txn_id", StringType(), True),
+        StructField("order_date", StringType(), True),
+        StructField("customer_id", StringType(), True),
+        StructField("region", StringType(), True),
+        StructField("channel", StringType(), True),
+        StructField("category", StringType(), True),
+        StructField("product_id", StringType(), True),
+        StructField("quantity", IntegerType(), True),
+        StructField("unit_price", DoubleType(), True),
+        StructField("discount_rate", DoubleType(), True),
+        StructField("returned", StringType(), True),
+        StructField("ship_date", StringType(), True),
+        StructField("delivery_date", StringType(), True),
+    ])
+
+# 2) load_data(spark, path, schema) -> DataFrame
+def load_data(spark: SparkSession, path: str, schema: StructType) -> DataFrame:
+    return spark.read.csv(path, header=True, schema=schema)
+
+# 3) parse_dates(df) -> DataFrame
+def parse_dates(df: DataFrame) -> DataFrame:
+    return (
+        df.withColumn("order_date", to_date(col("order_date")))
+          .withColumn("ship_date", to_date(col("ship_date")))
+          .withColumn("delivery_date", to_date(col("delivery_date")))
+    )
+
+# 4) add_gross_amount(df) -> DataFrame
+def add_gross_amount(df: DataFrame) -> DataFrame:
+    return df.withColumn("gross_amount", col("quantity") * col("unit_price"))
+
+# 5) add_net_amount(df) -> DataFrame
+def add_net_amount(df: DataFrame) -> DataFrame:
+    gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+    return df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+
+# 6) add_delivery_days(df) -> DataFrame
+def add_delivery_days(df: DataFrame) -> DataFrame:
+    return df.withColumn("delivery_days", datediff(col("delivery_date"), col("ship_date")))
+
+# 7) flag_on_time_delivery(df, max_days) -> DataFrame
+def flag_on_time_delivery(df: DataFrame, max_days: int) -> DataFrame:
+    delivery_days_col = col("delivery_days") if "delivery_days" in df.columns else datediff(col("delivery_date"), col("ship_date"))
+    return df.withColumn("is_on_time", delivery_days_col <= max_days)
+
+# 8) filter_returned_orders(df) -> DataFrame
+def filter_returned_orders(df: DataFrame) -> DataFrame:
+    return df.filter(col("returned") == "Y")
+
+# 9) filter_by_region(df, region) -> DataFrame
+def filter_by_region(df: DataFrame, region: str) -> DataFrame:
+    return df.filter(col("region") == region)
+
+# 10) top_n_customers_by_spend(df, n) -> DataFrame
+def top_n_customers_by_spend(df: DataFrame, n: int) -> DataFrame:
+    if "net_amount" not in df.columns:
+        gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+        df = df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+    return (
+        df.groupBy("customer_id")
+          .agg(_sum("net_amount").alias("total_spend"))
+          .orderBy(col("total_spend").desc(), col("customer_id").asc())
+          .limit(n)
+    )
+
+# 11) revenue_by_category(df) -> DataFrame
+def revenue_by_category(df: DataFrame) -> DataFrame:
+    if "net_amount" not in df.columns:
+        gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+        df = df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+    return (
+        df.groupBy("category")
+          .agg(_sum("net_amount").alias("total_revenue"))
+    )
+
+# 12) top_category_by_revenue(df) -> str
+def top_category_by_revenue(df: DataFrame) -> str:
+    if "net_amount" not in df.columns:
+        gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+        df = df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+    top_row = (
+        df.groupBy("category")
+          .agg(_sum("net_amount").alias("total_revenue"))
+          .orderBy(col("total_revenue").desc(), col("category").asc())
+          .first()
+    )
+    return top_row["category"] if top_row else None
+
+# 13) avg_discount_by_channel(df) -> DataFrame
+def avg_discount_by_channel(df: DataFrame) -> DataFrame:
+    return (
+        df.groupBy("channel")
+          .agg(avg("discount_rate").alias("avg_discount"))
+    )
+
+# 14) daily_revenue_trend(df) -> DataFrame
+def daily_revenue_trend(df: DataFrame) -> DataFrame:
+    if "net_amount" not in df.columns:
+        gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+        df = df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+    return (
+        df.groupBy("order_date")
+          .agg(_sum("net_amount").alias("daily_revenue"))
+          .orderBy(col("order_date").asc())
+    )
+
+# 15) high_value_orders(df, threshold) -> DataFrame
+def high_value_orders(df: DataFrame, threshold: float) -> DataFrame:
+    if "net_amount" not in df.columns:
+        gross_col = col("gross_amount") if "gross_amount" in df.columns else (col("quantity") * col("unit_price"))
+        df = df.withColumn("net_amount", gross_col * (1 - col("discount_rate")))
+    return df.filter(col("net_amount") > threshold)
+
+# 16) count_late_deliveries(df, max_days) -> int
+def count_late_deliveries(df: DataFrame, max_days: int) -> int:
+    delivery_days_col = col("delivery_days") if "delivery_days" in df.columns else datediff(col("delivery_date"), col("ship_date"))
+    return df.filter(delivery_days_col > max_days).count()
+
+# 17) return_rate_by_category(df) -> DataFrame
+def return_rate_by_category(df: DataFrame) -> DataFrame:
+    return (
+        df.groupBy("category")
+          .agg(
+              _count("*").alias("total_cnt"),
+              _sum(when(col("returned") == "Y", 1).otherwise(0)).alias("returned_cnt")
+          )
+          .withColumn("return_rate", col("returned_cnt") / col("total_cnt"))
+    )
+
+# 18) best_selling_product(df) -> tuple
+def best_selling_product(df: DataFrame) -> Tuple[str, int]:
+    top_row = (
+        df.groupBy("product_id")
+          .agg(_sum("quantity").alias("total_qty"))
+          .orderBy(col("total_qty").desc(), col("product_id").asc())
+          .first()
+    )
+    return (top_row["product_id"], top_row["total_qty"]) if top_row else (None, 0)
+
+# 19) list_channels(df) -> List[str]
+def list_channels(df: DataFrame) -> List[str]:
+    rows = df.select("channel").distinct().collect()
+    channel_list = [row["channel"] for row in rows if row["channel"] is not None]
+    return sorted(channel_list)
+
+# 20) orders_in_date_range(df, start, end) -> DataFrame
+def orders_in_date_range(df: DataFrame, start: str, end: str) -> DataFrame:
+    return df.filter(col("order_date").between(start, end))
