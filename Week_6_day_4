@@ -1,0 +1,16 @@
+spark = SparkSession.builder.appName("FeedbackAnalysis").getOrCreate()
+
+df = load_feedback_data(spark, "feedback.csv")
+
+cleaned_df = clean_missing_and_invalid_emails(df)
+
+print("Rating Statistics:")
+print(compute_rating_stats(cleaned_df))
+
+print("Number of Ratings:")
+print(count_ratings(cleaned_df))
+
+print("Most Common Rating:")
+print(most_common_rating(cleaned_df))
+
+spark.stop()
