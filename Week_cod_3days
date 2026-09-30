@@ -1,0 +1,217 @@
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.types import (
+    StructType, StructField, StringType,
+    TimestampType, IntegerType, DoubleType
+)
+from pyspark.sql.functions import (
+    col, concat_ws, when, sum, count, rank
+)
+from pyspark.sql.window import Window
+from typing import Tuple
+
+
+def define_inference_schema() -> StructType:
+    return StructType([
+        StructField("request_id", StringType(), True),
+        StructField("model_id", StringType(), True),
+        StructField("user_id", StringType(), True),
+        StructField("request_timestamp", StringType(), True),
+        StructField("input_tokens", StringType(), True),
+        StructField("output_tokens", StringType(), True),
+        StructField("latency_ms", StringType(), True),
+        StructField("status", StringType(), True),
+        StructField("request_region", StringType(), True)
+    ])
+
+
+def load_ai_platform_data(
+    spark: SparkSession,
+    requests_path: str,
+    models_path: str,
+    request_schema: StructType
+) -> Tuple[DataFrame, DataFrame]:
+
+    requests_df = (
+        spark.read
+        .option("header", True)
+        .schema(request_schema)
+        .csv(requests_path)
+    )
+
+    requests_df = (
+        requests_df
+        .withColumn("request_timestamp", col("request_timestamp").cast(TimestampType()))
+        .withColumn("input_tokens", col("input_tokens").cast(IntegerType()))
+        .withColumn("output_tokens", col("output_tokens").cast(IntegerType()))
+        .withColumn("latency_ms", col("latency_ms").cast(DoubleType()))
+    )
+
+    models_df = (
+        spark.read
+        .option("header", True)
+        .option("inferSchema", True)
+        .csv(models_path)
+    )
+
+    models_df = models_df.withColumn(
+        "cost_per_1k_tokens",
+        col("cost_per_1k_tokens").cast(DoubleType())
+    )
+
+    return requests_df, models_df
+
+
+def enrich_inference_requests(
+    requests_df: DataFrame,
+    models_df: DataFrame
+) -> DataFrame:
+
+    df = requests_df.join(
+        models_df,
+        on="model_id",
+        how="inner"
+    )
+
+    df = df.withColumn(
+        "serving_region",
+        when(
+            col("request_region").isNotNull(),
+            col("request_region")
+        ).otherwise(col("default_region"))
+    )
+
+    df = df.withColumn(
+        "model_display",
+        concat_ws(" - ", col("provider"), col("model_name"))
+    )
+
+    df = df.withColumn(
+        "total_tokens",
+        col("input_tokens") + col("output_tokens")
+    )
+
+    df = df.withColumn(
+        "request_cost",
+        (col("total_tokens") / 1000) * col("cost_per_1k_tokens")
+    )
+
+    df = df.withColumn(
+        "latency_band",
+        when(col("latency_ms") <= 1000, "Fast")
+        .when(col("latency_ms") <= 2000, "Moderate")
+        .otherwise("Slow")
+    )
+
+    return df
+
+
+def filter_successful_requests(df: DataFrame) -> DataFrame:
+    return df.filter(col("status") == "SUCCESS")
+
+
+def model_usage_summary(df: DataFrame) -> DataFrame:
+    return (
+        df.filter(col("status") == "SUCCESS")
+        .groupBy("model_id", "model_display")
+        .agg(
+            sum("total_tokens").alias("total_tokens"),
+            sum("request_cost").alias("total_cost"),
+            count("request_id").alias("request_count")
+        )
+    )
+
+
+def top_n_models_by_cost(
+    df: DataFrame,
+    n: int
+) -> DataFrame:
+
+    success_df = df.filter(col("status") == "SUCCESS")
+
+    grouped_df = (
+        success_df
+        .groupBy("model_id", "model_display")
+        .agg(
+            sum("request_cost").alias("total_cost"),
+            count("request_id").alias("request_count")
+        )
+    )
+
+    window_spec = Window.orderBy(col("total_cost").desc())
+
+    ranked_df = grouped_df.withColumn(
+        "cost_rank",
+        rank().over(window_spec)
+    )
+
+    return (
+        ranked_df
+        .filter(col("cost_rank") <= n)
+        .select(
+            "model_id",
+            "model_display",
+            "total_cost",
+            "request_count",
+            "cost_rank"
+        )
+        .orderBy(
+            col("cost_rank").asc(),
+            col("model_id").asc()
+        )
+    )
+
+
+def platform_kpi_summary(df: DataFrame) -> dict:
+
+    success_df = df.filter(col("status") == "SUCCESS")
+
+    successful_requests = success_df.count()
+
+    if successful_requests == 0:
+        return {
+            "successful_requests": 0,
+            "total_tokens": 0,
+            "total_cost": 0.0
+        }
+
+    result = success_df.agg(
+        sum("total_tokens").alias("total_tokens"),
+        sum("request_cost").alias("total_cost")
+    ).collect()[0]
+
+    return {
+        "successful_requests": successful_requests,
+        "total_tokens": int(result["total_tokens"] or 0),
+        "total_cost": float(result["total_cost"] or 0.0)
+    }
+
+
+def highest_cost_model(
+    df: DataFrame
+) -> Tuple[str, float]:
+
+    filtered_df = (
+        df.filter(col("status") == "SUCCESS")
+        .filter(col("model_display").isNotNull())
+        .filter(col("request_cost").isNotNull())
+    )
+
+    result = (
+        filtered_df
+        .groupBy("model_display")
+        .agg(
+            sum("request_cost").alias("total_cost")
+        )
+        .orderBy(
+            col("total_cost").desc()
+        )
+        .first()
+    )
+
+    if result is None:
+        return (None, 0.0)
+
+    return (
+        result["model_display"],
+        float(result["total_cost"])
+    )
