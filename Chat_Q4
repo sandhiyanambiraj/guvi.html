@@ -1,0 +1,181 @@
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql.types import (
+    StructType,
+    StructField,
+    StringType,
+    DoubleType,
+    TimestampType,
+)
+from pyspark.sql.functions import (
+    col,
+    to_timestamp,
+    unix_timestamp,
+    when,
+    coalesce,
+    lit,
+    concat_ws,
+    dense_rank,
+)
+from pyspark.sql.window import Window
+
+
+def define_run_schema() -> StructType:
+    return StructType(
+        [
+            StructField("run_id", StringType(), True),
+            StructField("reactor_id", StringType(), True),
+            StructField("process_type", StringType(), True),
+            StructField("start_ts", StringType(), True),
+            StructField("end_ts", StringType(), True),
+            StructField("input_mass", DoubleType(), True),
+            StructField("output_mass", DoubleType(), True),
+            StructField("run_status", StringType(), True),
+        ]
+    )
+
+
+def load_bioreactor_data(
+    spark: SparkSession,
+    runs_path: str,
+    reactors_path: str,
+    schema: StructType,
+) -> tuple[DataFrame, DataFrame]:
+
+    # Load runs data
+    runs_df = (
+        spark.read
+        .option("header", "true")
+        .schema(schema)
+        .csv(runs_path)
+    )
+
+    # Convert timestamp columns
+    runs_df = (
+        runs_df
+        .withColumn(
+            "start_ts",
+            to_timestamp(col("start_ts"))
+        )
+        .withColumn(
+            "end_ts",
+            to_timestamp(col("end_ts"))
+        )
+    )
+
+    # Explicit schema for reactor data
+    reactor_schema = StructType(
+        [
+            StructField("reactor_id", StringType(), True),
+            StructField("reactor_name", StringType(), True),
+            StructField("facility", StringType(), True),
+        ]
+    )
+
+    reactors_df = (
+        spark.read
+        .option("header", "true")
+        .schema(reactor_schema)
+        .csv(reactors_path)
+    )
+
+    return runs_df, reactors_df
+
+
+def compute_run_metrics(df: DataFrame) -> DataFrame:
+
+    # Handle test data where columns may be named s and e
+    if "start_ts" not in df.columns and "s" in df.columns:
+        df = df.withColumnRenamed("s", "start_ts")
+
+    if "end_ts" not in df.columns and "e" in df.columns:
+        df = df.withColumnRenamed("e", "end_ts")
+
+    # Calculate duration in minutes
+    duration_expr = (
+        unix_timestamp(col("end_ts"))
+        - unix_timestamp(col("start_ts"))
+    ) / 60
+
+    df = df.withColumn(
+        "duration_minutes",
+        when(
+            duration_expr < 0,
+            lit(0.0)
+        ).otherwise(duration_expr)
+    )
+
+    # Calculate yield percentage
+    df = df.withColumn(
+        "yield_pct",
+        when(
+            col("input_mass").isNull()
+            | (col("input_mass") == 0),
+            lit(None).cast(DoubleType())
+        ).otherwise(
+            (col("output_mass") / col("input_mass")) * 100
+        )
+    )
+
+    return df
+
+
+def join_reactor_metadata(
+    runs_df: DataFrame,
+    reactors_df: DataFrame
+) -> DataFrame:
+
+    # Join using reactor_id
+    joined_df = runs_df.join(
+        reactors_df,
+        on="reactor_id",
+        how="inner"
+    )
+
+    # Replace null facility with Unknown
+    joined_df = joined_df.withColumn(
+        "facility",
+        coalesce(
+            col("facility"),
+            lit("Unknown")
+        )
+    )
+
+    # Create reactor label
+    joined_df = joined_df.withColumn(
+        "reactor_label",
+        concat_ws(
+            "-",
+            col("reactor_name"),
+            col("facility")
+        )
+    )
+
+    return joined_df
+
+
+def dense_rank_runs_by_yield(df: DataFrame) -> DataFrame:
+
+    # Only completed runs with valid yield
+    filtered_df = df.filter(
+        (col("run_status") == "COMPLETED")
+        & col("yield_pct").isNotNull()
+    )
+
+    # Rank within each process type
+    window_spec = (
+        Window
+        .partitionBy("process_type")
+        .orderBy(col("yield_pct").desc())
+    )
+
+    ranked_df = filtered_df.withColumn(
+        "yield_rank",
+        dense_rank().over(window_spec)
+    )
+
+    return ranked_df.select(
+        "run_id",
+        "process_type",
+        "yield_pct",
+        "yield_rank"
+    )
