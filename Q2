@@ -1,0 +1,112 @@
+from pyspark.sql import DataFrame
+from pyspark.sql.functions import col, when, lit, count, desc, asc
+from pyspark.sql import functions as F
+from pyspark.sql.types import TimestampType, DoubleType
+
+
+# Task 1 — Load Ad Impressions
+def load_ad_impressions(spark, path: str) -> DataFrame:
+    df = (
+        spark.read
+        .option("header", "true")
+        .option("inferSchema", "true")
+        .csv(path)
+    )
+
+    return (
+        df.withColumn(
+            "impression_ts",
+            col("impression_ts").cast(TimestampType())
+        )
+        .withColumn(
+            "watched_seconds",
+            col("watched_seconds").cast(DoubleType())
+        )
+        .withColumn(
+            "ad_length_seconds",
+            col("ad_length_seconds").cast(DoubleType())
+        )
+        .withColumn(
+            "spend_amount",
+            col("spend_amount").cast(DoubleType())
+        )
+    )
+
+
+# Task 2 — Join Campaign Metadata
+def join_campaign_metadata(
+    impressions_df: DataFrame,
+    campaigns_df: DataFrame
+) -> DataFrame:
+    return impressions_df.join(
+        campaigns_df,
+        on="campaign_id",
+        how="inner"
+    )
+
+
+# Task 3 — Add Engagement Metrics
+def add_engagement_metrics(df: DataFrame) -> DataFrame:
+    df = df.withColumn(
+        "watch_pct",
+        when(
+            col("ad_length_seconds").isNull()
+            | (col("ad_length_seconds") <= 0),
+            lit(0.0)
+        ).otherwise(
+            (col("watched_seconds") / col("ad_length_seconds")) * 100
+        )
+    )
+
+    return df.withColumn(
+        "engagement_band",
+        when(col("watch_pct") >= 80, lit("High"))
+        .when(col("watch_pct") >= 40, lit("Medium"))
+        .otherwise(lit("Low"))
+    )
+
+
+# Task 4 — Campaign Performance Summary
+def campaign_performance_summary(df: DataFrame) -> DataFrame:
+    return (
+        df.filter(
+            col("delivery_status") == "DELIVERED"
+        )
+        .groupBy(
+            "campaign_id",
+            "campaign_name"
+        )
+        .agg(
+            count("impression_id").alias("impression_count"),
+            F.sum("spend_amount").alias("total_spend"),
+            F.sum(
+                when(
+                    col("clicked") == "Y",
+                    lit(1)
+                ).otherwise(
+                    lit(0)
+                )
+            ).alias("click_count")
+        )
+    )
+
+
+# Task 5 — Top N Campaigns by Spend
+def top_n_campaigns_by_spend(
+    df: DataFrame,
+    n: int
+) -> DataFrame:
+    return (
+        df.orderBy(
+            desc("total_spend"),
+            asc("campaign_id")
+        )
+        .select(
+            "campaign_id",
+            "campaign_name",
+            "total_spend",
+            "impression_count",
+            "click_count"
+        )
+        .limit(n)
+    )
