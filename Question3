@@ -1,0 +1,46 @@
+from pyspark.sql import DataFrame
+import pyspark.sql.functions as F
+from pyspark.sql.types import DateType
+
+# Task 1 — Load Vaccine Batches
+def load_vaccine_batches(spark, path: str) -> DataFrame:
+    df = spark.read.option("header", "true") \
+                  .option("inferSchema", "true") \
+                  .csv(path)
+    
+    # Convert manufacture_date and expiry_date to DateType
+    return df.withColumn("manufacture_date", F.to_date(F.col("manufacture_date"))) \
+             .withColumn("expiry_date", F.to_date(F.col("expiry_date")))
+
+# Task 2 — Drop Incomplete Batches
+def drop_incomplete_batches(df: DataFrame) -> DataFrame:
+    # Drop rows containing nulls in the required subset of columns
+    subset_cols = [
+        "batch_id",
+        "product_name",
+        "manufacture_date",
+        "expiry_date",
+        "potency_pct"
+    ]
+    return df.dropna(subset=subset_cols)
+
+# Task 3 — Add Stability Dates
+def add_stability_dates(df: DataFrame) -> DataFrame:
+    return df.withColumn("shelf_life_days", F.datediff(F.col("expiry_date"), F.col("manufacture_date"))) \
+             .withColumn("review_date", F.date_add(F.col("manufacture_date"), 30)) \
+             .withColumn("days_since_manufacture", F.datediff(F.current_date(), F.col("manufacture_date")))
+
+# Task 4 — Filter Potency Range
+def filter_potency_range(df: DataFrame, low: float, high: float) -> DataFrame:
+    # Keep values inclusively between low and high using .between()
+    return df.filter(F.col("potency_pct").between(low, high))
+
+# Task 5 — Count Release-Ready Batches
+def count_release_ready_batches(df: DataFrame) -> int:
+    # Filter where release_status == 'RELEASED' and potency_pct is not null
+    count_val = df.filter(
+        (F.col("release_status") == "RELEASED") & F.col("potency_pct").isNotNull()
+    ).count()
+    
+    # Return as standard Python integer
+    return int(count_val)
