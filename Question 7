@@ -1,0 +1,63 @@
+from typing import Tuple
+from pyspark.sql import DataFrame, SparkSession
+import pyspark.sql.functions as F
+
+def load_kyc_data(spark: SparkSession, path: str) -> DataFrame:
+    df = spark.read.option("header", "true") \
+                   .option("inferSchema", "true") \
+                   .csv(path)
+    return df.withColumn("onboarding_date", F.to_date(F.col("onboarding_date")))
+
+def remove_invalid_emails(df: DataFrame) -> DataFrame:
+    df_clean = df.filter(F.col("email").isNotNull())
+    df_clean = df_clean.withColumn("email", F.trim(F.col("email")))
+    df_clean = df_clean.filter(F.col("email") != "")
+    
+    email_pattern = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+    return df_clean.filter(F.col("email").rlike(email_pattern))
+
+def filter_review_customers(df: DataFrame, min_score: int, max_score: int) -> DataFrame:
+    return df.filter(
+        F.col("risk_score").between(min_score, max_score) &
+        F.col("kyc_status").isin(["PENDING", "REVIEW"])
+    )
+
+def risk_score_statistics(df: DataFrame) -> dict:
+    valid_df = df.filter(F.col("risk_score").isNotNull())
+    
+    stats = valid_df.agg(
+        F.min("risk_score").alias("min_score"),
+        F.max("risk_score").alias("max_score"),
+        F.avg("risk_score").alias("avg_score"),
+        F.count("risk_score").alias("total_customers")
+    ).collect()
+    
+    if not stats or stats[0]["total_customers"] == 0:
+        return {
+            "min_score": None,
+            "max_score": None,
+            "avg_score": None,
+            "total_customers": 0
+        }
+    
+    row = stats[0]
+    return {
+        "min_score": row["min_score"],
+        "max_score": row["max_score"],
+        "avg_score": float(row["avg_score"]) if row["avg_score"] is not None else None,
+        "total_customers": int(row["total_customers"])
+    }
+
+def city_highest_average_risk(df: DataFrame) -> Tuple[str, float]:
+    filtered_df = df.filter(F.col("city").isNotNull() & F.col("risk_score").isNotNull())
+    
+    avg_df = filtered_df.groupBy("city") \
+                        .agg(F.avg("risk_score").alias("average_risk")) \
+                        .orderBy(F.col("average_risk").desc(), F.col("city").asc())
+                        
+    result = avg_df.limit(1).collect()
+    
+    if not result:
+        return ("", 0.0)
+        
+    return (result[0]["city"], float(result[0]["average_risk"]))
