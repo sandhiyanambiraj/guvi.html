@@ -1,0 +1,76 @@
+from typing import Tuple
+from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, IntegerType
+
+def define_settlement_schema() -> StructType:
+    return StructType([
+        StructField("settlement_id", StringType(), True),
+        StructField("merchant_id", StringType(), True),
+        StructField("settlement_ts", StringType(), True),
+        StructField("gross_amount", DoubleType(), True),
+        StructField("fee_amount", DoubleType(), True),
+        StructField("settlement_status", StringType(), True)
+    ])
+
+def load_settlement_data(
+    spark: SparkSession, 
+    settlements_path: str, 
+    merchants_path: str, 
+    schema: StructType
+) -> Tuple[DataFrame, DataFrame]:
+    settlements_df = spark.read.option("header", "true") \
+                               .schema(schema) \
+                               .csv(settlements_path)
+    
+    settlements_df = settlements_df.withColumn(
+        "settlement_ts", 
+        F.to_timestamp(F.col("settlement_ts"))
+    )
+
+    merchants_df = spark.read.option("header", "true") \
+                             .option("inferSchema", "true") \
+                             .csv(merchants_path)
+    
+    if "risk_score" in merchants_df.columns:
+        merchants_df = merchants_df.withColumn(
+            "risk_score", 
+            F.col("risk_score").cast(IntegerType())
+        )
+
+    return settlements_df, merchants_df
+
+def enrich_settlements(settlements_df: DataFrame, merchants_df: DataFrame) -> DataFrame:
+    joined_df = settlements_df.join(merchants_df, "merchant_id", "inner")
+    
+    city_col = F.coalesce(F.col("city"), F.lit("Unknown"))
+    
+    enriched_df = joined_df \
+        .withColumn("city", city_col) \
+        .withColumn("merchant_label", F.concat_ws(" - ", F.col("merchant_name"), city_col)) \
+        .withColumn("net_amount", F.col("gross_amount") - F.col("fee_amount"))
+        
+    return enriched_df
+
+def merchants_without_successful_settlement(merchants_df: DataFrame, settlements_df: DataFrame) -> DataFrame:
+    successful_merchants = settlements_df \
+        .filter(F.col("settlement_status") == "SUCCESS") \
+        .select("merchant_id") \
+        .distinct()
+        
+    return merchants_df.join(successful_merchants, "merchant_id", "left_anti")
+
+def rank_merchants_by_net_amount(df: DataFrame) -> DataFrame:
+    successful_df = df.filter(F.col("settlement_status") == "SUCCESS")
+    
+    grouped_df = successful_df.groupBy("merchant_id", "merchant_label").agg(
+        F.sum("net_amount").alias("total_net_amount"),
+        F.count("settlement_id").alias("settlement_count")
+    )
+    
+    windowSpec = Window.orderBy(F.col("total_net_amount").desc())
+    
+    ranked_df = grouped_df.withColumn("settlement_rank", F.rank().over(windowSpec))
+    
+    return ranked_df
