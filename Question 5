@@ -1,0 +1,52 @@
+from typing import List
+from pyspark.sql import DataFrame, SparkSession
+import pyspark.sql.functions as F
+
+def load_inline_triage_data(spark: SparkSession) -> DataFrame:
+    data = [
+        ("C001", "ER", "2026-09-01 08:00:00", "2026-09-01 08:25:00", "High", "ACTIVE"),
+        ("C002", "Trauma", "2026-09-01 08:10:00", "2026-09-01 08:05:00", "Critical", "ACTIVE"),
+        ("C003", "Pediatrics", "2026-09-01 09:00:00", "2026-09-01 09:45:00", "Low", "ACTIVE"),
+        ("C004", "ER", "2026-09-01 09:30:00", "2026-09-01 10:00:00", "High", "CLOSED")
+    ]
+    
+    columns = [
+        "case_id", 
+        "department", 
+        "arrival_time", 
+        "doctor_start_time", 
+        "priority", 
+        "status"
+    ]
+    
+    return spark.createDataFrame(data, schema=columns)
+
+
+def compute_wait_minutes(df: DataFrame) -> DataFrame:
+    diff_expr = (F.unix_timestamp("doctor_start_time") - F.unix_timestamp("arrival_time")) / 60
+    
+    return df.withColumn(
+        "wait_minutes",
+        F.when(diff_expr < 0, 0).otherwise(diff_expr)
+    )
+
+
+def filter_priority_cases(df: DataFrame) -> DataFrame:
+    return df.filter(
+        F.col("priority").isin(["Critical", "High"]) & F.col("wait_minutes").isNotNull()
+    )
+
+
+def average_wait_by_department(df: DataFrame) -> DataFrame:
+    return df.groupBy("department").agg(
+        F.avg("wait_minutes").alias("avg_wait_minutes")
+    )
+
+
+def list_active_departments(df: DataFrame) -> List[str]:
+    active_df = df.filter(F.col("status") == "ACTIVE") \
+                  .select("department") \
+                  .distinct() \
+                  .orderBy("department")
+                  
+    return [row.department for row in active_df.collect()]
