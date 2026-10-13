@@ -1,0 +1,95 @@
+from pyspark.sql import functions as F
+
+df = (
+    spark.read
+    .option("header", True)
+    .option("inferSchema", True)
+    .csv(path)
+)
+
+print("Raw row count:", df.count())
+
+df.select(
+    F.count(
+        F.when(F.col("consultation_fee").isNull(), 1)
+    ).alias("consultation_fee_null_count")
+).show()
+
+
+
+clean_df = (
+    df.filter(F.col("consultation_fee").isNotNull())
+    .withColumn(
+        "consultation_fee",
+        F.col("consultation_fee").cast("double")
+    )
+    .withColumn(
+        "medicine_fee",
+        F.col("medicine_fee").cast("double")
+    )
+    .withColumn(
+        "total_bill",
+        F.col("consultation_fee") + F.col("medicine_fee")
+    )
+    .withColumn(
+        "review_flag",
+        F.when(F.col("total_bill") >= 1500, "HIGH")
+         .otherwise("NORMAL")
+    )
+)
+
+print("Final row count:", clean_df.count())
+clean_df.show(truncate=False)
+
+
+SELECT * 
+FROM uc_practice_health.billing_ops.patient_billing_silver;
+
+
+
+table_name = (
+    "uc_practice_health.billing_ops.patient_billing_silver"
+)
+
+(clean_df.write
+ .format("delta")
+ .mode("overwrite")
+ .saveAsTable(table_name))
+
+
+
+SELECT COUNT(*) AS total_count
+FROM uc_practice_health.billing_ops.patient_billing_silver;
+
+
+
+
+
+SELECT
+    department,
+    COUNT(*) AS patient_count,
+    SUM(total_bill) AS total_revenue
+FROM uc_practice_health.billing_ops.patient_billing_silver
+GROUP BY department
+ORDER BY department;
+
+
+
+
+
+
+SELECT *
+FROM uc_practice_health.billing_ops.patient_billing_silver
+WHERE review_flag IN ('REVIEW', 'HIGH');
+
+
+
+
+SELECT
+    department,
+    ROUND(AVG(total_bill), 2) AS average_bill
+FROM uc_practice_health.billing_ops.patient_billing_silver
+GROUP BY department
+ORDER BY department;
+
+
