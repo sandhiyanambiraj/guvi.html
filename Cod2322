@@ -1,0 +1,238 @@
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, lit, count, sum
+from pyspark.sql.types import *
+from delta.tables import DeltaTable
+
+spark = SparkSession.builder.getOrCreate()
+
+# Catalog and schema
+catalog = "uc_practice_ecommerce"
+schema = "order_ops"
+
+# CSV path in Unity Catalog Volume
+volume_path = f"/Volumes/{catalog}/{schema}/raw_orders_vol"
+
+csv_path = f"{volume_path}/data.csv"
+
+# Managed Delta table
+table_name = f"{catalog}.{schema}.orders_silver"
+
+# Read CSV
+df = (
+    spark.read
+    .option("header", True)
+    .option("inferSchema", True)
+    .csv(csv_path)
+)
+
+# Display raw data
+df.show()
+
+# Raw row count
+print("Raw count:", df.count())
+
+# NULL count in unit_price
+print(
+    "NULL unit_price count:",
+    df.filter(col("unit_price").isNull()).count()
+)
+
+df.printSchema()
+
+
+
+
+
+clean_df = df.filter(col("unit_price").isNotNull())
+
+enriched_df = (
+    clean_df
+    .withColumn(
+        "order_value",
+        col("quantity") * col("unit_price")
+    )
+    .withColumn(
+        "review_flag",
+        when(col("order_value") >= 5000, lit("PRIORITY"))
+        .otherwise(lit("STANDARD"))
+    )
+)
+
+# Final count
+print("Final count:", enriched_df.count())
+
+# Display sample rows
+enriched_df.show(10, truncate=False)
+
+
+
+
+(
+    enriched_df.write
+    .format("delta")
+    .mode("overwrite")
+    .saveAsTable(table_name)
+)
+
+print("Delta table created successfully")
+
+spark.sql(f"SELECT * FROM {table_name}").show()
+
+
+
+
+
+spark.sql(f"""
+SELECT COUNT(*) AS total_count
+FROM {table_name}
+""").show()
+
+spark.sql(f"""
+SELECT
+    category,
+    COUNT(*) AS order_count,
+    SUM(order_value) AS total_order_value
+FROM {table_name}
+GROUP BY category
+ORDER BY category
+""").show()
+
+
+
+
+
+
+existing_df = spark.table(table_name)
+
+updated_df = existing_df.withColumn(
+    "source_system",
+    lit("BATCH_CSV")
+)
+
+(
+    updated_df.write
+    .format("delta")
+    .mode("overwrite")
+    .option("overwriteSchema", "true")
+    .saveAsTable(table_name)
+)
+
+# Display updated schema
+spark.table(table_name).printSchema()
+
+# Verify record count
+print("Updated count:", spark.table(table_name).count())
+
+spark.table(table_name).show(10, truncate=False)
+
+
+
+
+
+spark.sql(f"""
+ALTER TABLE {table_name}
+SET TBLPROPERTIES (
+    'delta.enableChangeDataFeed' = 'true'
+)
+""")
+
+
+
+
+spark.sql(f"DESCRIBE HISTORY {table_name}").show(
+    10,
+    truncate=False
+)
+
+
+
+
+spark.sql(f"""
+UPDATE {table_name}
+SET order_value = order_value + 100
+WHERE order_id = '0001'
+""")
+
+
+
+
+
+
+pre_update_version = 0  # Replace with the actual version
+
+post_update_version = (
+    pre_update_version + 1
+)
+
+changes_df = spark.sql(f"""
+SELECT *
+FROM table_changes(
+    '{table_name}',
+    {post_update_version},
+    {post_update_version}
+)
+""")
+
+changes_df.show(truncate=False)
+
+
+
+
+
+
+
+spark.sql(f"""
+SELECT order_id, order_value
+FROM {table_name}
+VERSION AS OF {pre_update_version}
+WHERE order_id = '0001'
+""").show()
+
+
+
+
+
+
+spark.sql(f"""
+OPTIMIZE {table_name}
+""").show(truncate=False)
+
+
+
+
+
+spark.sql(f"""
+OPTIMIZE {table_name}
+ZORDER BY (category)
+""").show(truncate=False)
+
+
+
+
+
+spark.sql(f"""
+SELECT
+    COUNT(*) AS total_orders,
+    SUM(order_value) AS total_order_value,
+    COUNT(DISTINCT customer_id) AS unique_customers
+FROM {table_name}
+""").show()
+
+spark.sql(f"""
+SELECT
+    category,
+    COUNT(*) AS order_count,
+    SUM(order_value) AS total_order_value
+FROM {table_name}
+GROUP BY category
+ORDER BY category
+""").show()
+
+spark.sql(f"""
+DESCRIBE HISTORY {table_name}
+""").show(10, truncate=False)
+
+
+
+
+
